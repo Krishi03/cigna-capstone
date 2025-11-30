@@ -186,7 +186,7 @@ const ClaimModal = ({ claim, policies, onClose }) => {
               <option value="">Choose a policy</option>
               {activePolicies.map((policy) => (
                 <option key={policy.policyId} value={policy.policyId}>
-                  {policy.insurer} - {policy.policyType} (₹{policy.premiumAmt})
+                  {policy.insurer} - {policy.policyType} (₹{policy.premiumAmt.toLocaleString("en-IN")})
                 </option>
               ))}
             </select>

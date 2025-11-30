@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Plus, Edit, Trash2, FileText, DollarSign, Clock, Search } from 'lucide-react';
+import { Plus, Edit, Trash2, FileText, Clock, Search, IndianRupee } from 'lucide-react';
 import Navbar from '../components/Navbar';
 import ClaimModal from '../components/ClaimModal';
 import { claimService } from '../services/claimService';
@@ -242,9 +242,9 @@ const handleWithdrawClaim = async (claim) => {
                 <div className="p-6">
                   <div className="space-y-3 mb-4 text-slate-800">
                     <div className="flex items-center space-x-2">
-                      <DollarSign className="h-5 w-5 text-emerald-600 flex-shrink-0" />
+                      <IndianRupee className="h-5 w-5 text-emerald-600 flex-shrink-0" />
                       <span className="font-semibold">Amount:</span>
-                      <span>₹{claim.claimAmt?.toFixed(2)}</span>
+                      <span>₹{claim.claimAmt?.toLocaleString("en-IN")}</span>
                     </div>
 
                     <div className="flex items-start space-x-2">

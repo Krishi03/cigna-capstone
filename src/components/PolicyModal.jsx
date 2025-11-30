@@ -5,179 +5,230 @@ import { jwtDecode } from "jwt-decode";
 import { toast } from 'react-toastify';
 
 const PolicyModal = ({ policy, onClose }) => {
+  const mode = policy?.mode || (policy ? "edit" : "create");
+  const isRenew = mode === "renew";
+  const isEdit = mode === "edit";
+  const isCreate = mode === "create";
+
+  const todayISO = new Date().toISOString().split("T")[0];
+  const addDaysISO = (dateStr, days) => {
+    const d = new Date(dateStr);
+    d.setDate(d.getDate() + days);
+    return d.toISOString().split("T")[0];
+  };
+
   const [formData, setFormData] = useState({
-    insurer: '',
-    policyType: '',
-    premiumAmt: '',
-    startDate: '',
-    endDate: '',
-    status: 'Active',
+    insurer: "",
+    policyType: "",
+    premiumAmt: "",
+    startDate: todayISO,
+    endDate: addDaysISO(todayISO, 1),
+    status: "Active",
   });
-  const [error, setError] = useState('');
+
+  const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
+  // --------------------------
+  // PREFILL LOGIC
+  // --------------------------
   useEffect(() => {
+    if (isCreate) {
+      // Set default start + end
+      const newStart = todayISO;
+      setFormData({
+        insurer: "",
+        policyType: "",
+        premiumAmt: "",
+        startDate: newStart,
+        endDate: addDaysISO(newStart, 1),
+        status: "Active",
+      });
+      return;
+    }
+
     if (policy) {
+      const oldEnd = policy.endDate?.split("T")[0] || todayISO;
+      const nextStart = addDaysISO(oldEnd, 1);
+
       setFormData({
         insurer: policy.insurer,
         policyType: policy.policyType,
         premiumAmt: policy.premiumAmt,
-        startDate: policy.startDate?.split('T')[0] || '',
-        endDate: policy.endDate?.split('T')[0] || '',
-        status: policy.status,
+        startDate: isRenew ? nextStart : policy.startDate.split("T")[0],
+        endDate: policy.endDate.split("T")[0],
+        status: isRenew ? "Active" : policy.status,
       });
     }
-  }, [policy]);
+  }, [policy]); // eslint-disable-line
 
+  // --------------------------
+  // MIN LOGIC FOR DATES
+  // --------------------------
+  const startMin = todayISO;
+  const endMin = addDaysISO(formData.startDate, 1);
+
+  // --------------------------
+  // ON CHANGE HANDLER
+  // --------------------------
   const handleChange = (e) => {
-    setFormData({
-      ...formData,
-      [e.target.name]: e.target.value,
-    });
-    setError('');
+    const { name, value } = e.target;
+
+    // Renew → only allow editing endDate
+    if (isRenew && name !== "endDate") return;
+
+    // Edit → lock start & end
+    if (isEdit && (name === "startDate" || name === "endDate")) return;
+
+    let updated = { ...formData, [name]: value };
+
+    // If user changes start date → force update end date min
+    if (name === "startDate") {
+      const newMinEnd = addDaysISO(value, 1);
+
+      if (new Date(updated.endDate) < new Date(newMinEnd)) {
+        updated.endDate = newMinEnd;
+      }
+    }
+
+    setFormData(updated);
+    setError("");
   };
 
+  // --------------------------
+  // VALIDATION
+  // --------------------------
   const validateForm = () => {
-    if (!formData.insurer || !formData.policyType || !formData.premiumAmt || !formData.startDate || !formData.endDate) {
-      setError('Please fill in all required fields');
+    if (!formData.insurer || !formData.policyType || formData.premiumAmt === "" ||
+        !formData.startDate || !formData.endDate) {
+      setError("Please fill all required fields");
       return false;
     }
 
-    if (parseFloat(formData.premiumAmt) <= 0) {
-      setError('Premium amount must be greater than 0');
+    if (isNaN(parseFloat(formData.premiumAmt)) || parseFloat(formData.premiumAmt) <= 0) {
+      setError("Premium must be greater than 0");
       return false;
     }
 
-    if (new Date(formData.startDate) >= new Date(formData.endDate)) {
-      setError('End date must be after start date');
+    const start = new Date(formData.startDate);
+    const end = new Date(formData.endDate);
+    const minEnd = new Date(endMin);
+
+    if (isCreate && start < new Date(todayISO)) {
+      setError("Start date cannot be in the past");
+      return false;
+    }
+
+    if (end < minEnd) {
+      setError(`End date must be after ${endMin}`);
       return false;
     }
 
     return true;
   };
 
+  // --------------------------
+  // SUBMIT HANDLER
+  // --------------------------
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setError('');
 
-    if (!validateForm()) {
-      return;
-    }
-
+    if (!validateForm()) return;
     setLoading(true);
-    
-  try {
 
-    const token = localStorage.getItem('token');
-    if (!token) {
-      setError('User is not authenticated');
+    try {
+      const token = localStorage.getItem("token");
+      const decoded = jwtDecode(token);
+
+      const payload = {
+        ...formData,
+        premiumAmt: parseFloat(formData.premiumAmt),
+        status: isRenew ? "Active" : formData.status,
+        userId: decoded.id,
+      };
+
+      if (isCreate) {
+        await policyService.createPolicy(payload);
+      } else {
+        await policyService.updatePolicy(policy.policyId, payload);
+      }
+
+      toast.success(
+        isCreate
+          ? "Policy Created!"
+          : isRenew
+          ? "Policy Renewed!"
+          : "Policy Updated!",
+        {
+          position: "top-center",
+          style: {
+            background: "linear-gradient(135deg, #6EE7B7, #38BDF8)",
+            color: "#0F172A",
+            fontWeight: "600",
+            borderRadius: "12px",
+          },
+          icon: "✔️",
+        }
+      );
+
+      onClose();
+    } catch (err) {
+      setError("Failed to save policy");
+    } finally {
       setLoading(false);
-      return;
     }
-
-    const decoded = jwtDecode(token);
-    const userId = decoded.id; 
-
-    const policyData = {
-      ...formData,
-      premiumAmt: parseFloat(formData.premiumAmt),
-      userId: userId, 
-    };
-
-    if (policy) {
-      await policyService.updatePolicy(policy.policyId, policyData);
-    } else {
-      await policyService.createPolicy(policyData);
-      console.log(policyData);
-    }
-
-    //toast
-  toast.success("Done! Your policy is now in safe hands!", {
-  position: "top-center",
-  autoClose: 2500,
-  hideProgressBar: false,
-  closeOnClick: true,
-  pauseOnHover: true,
-  draggable: true,
-
-  icon: () => (
-    <span style={{ color: "white", fontSize: "22px", fontWeight: "bold" }}>✔</span>
-  ),
-
-  style: {
-    fontSize: "18px",
-    padding: "18px 22px",
-    borderRadius: "14px",
-    fontFamily: "'Poppins', 'Segoe UI', sans-serif",
-
-    background: "linear-gradient(135deg, #6EE7B7, #38BDF8)",  // EXACT card gradient
-    color: "#0F172A", // Slate-900 text (visible!)
-    fontWeight: "600",
-
-    boxShadow: "0 8px 20px rgba(0,0,0,0.15)",
-    border: "1px solid rgba(0,0,0,0.1)",
-  }
-});
-
-
-    onClose();
-  } catch (err) {
-    setError(err.response?.data?.message || 'Failed to save policy');
-  } finally {
-    setLoading(false);
-  }
-    
   };
 
+  // --------------------------
+  // UI STARTS
+  // --------------------------
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+
       <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-        <div className="bg-gradient-to-r from-blue-600 to-green-500 p-6 flex justify-between items-center">
-          <h2 className="text-2xl font-bold text-white">
-            {policy ? 'Edit Policy' : 'Add New Policy'}
+
+        {/* HEADER */}
+        <div className="bg-gradient-to-r from-blue-600 to-green-500 p-6 flex justify-between">
+          <h2 className="text-2xl text-white font-bold">
+            {isCreate ? "Add New Policy" : isRenew ? "Renew Policy" : "Edit Policy"}
           </h2>
-          <button
-            onClick={onClose}
-            className="text-white hover:text-gray-200 transition-colors"
-          >
-            <X className="h-6 w-6" />
-          </button>
+          <button onClick={onClose}><X className="text-white h-6 w-6" /></button>
         </div>
 
+        {/* FORM */}
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
+
           {error && (
-            <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex items-start space-x-3">
-              <AlertCircle className="h-5 w-5 text-red-600 mt-0.5 flex-shrink-0" />
-              <p className="text-sm text-red-800">{error}</p>
+            <div className="bg-red-50 border border-red-200 p-3 rounded-lg flex space-x-3">
+              <AlertCircle className="text-red-600 h-5 w-5" />
+              <p className="text-red-800 text-sm">{error}</p>
             </div>
           )}
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+
+            {/* Insurer */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Insurer *
-              </label>
+              <label className="text-sm font-medium">Insurer *</label>
               <input
                 type="text"
                 name="insurer"
                 value={formData.insurer}
                 onChange={handleChange}
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
-                placeholder="e.g., State Farm"
-                required
+                disabled={isRenew}
+                className={`w-full px-4 py-3 border rounded-lg ${isRenew ? "bg-gray-100 cursor-not-allowed" : ""}`}
               />
             </div>
 
+            {/* Type */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Policy Type *
-              </label>
+              <label className="text-sm font-medium">Policy Type *</label>
               <select
                 name="policyType"
                 value={formData.policyType}
                 onChange={handleChange}
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
-                required
+                disabled={isRenew}
+                className={`w-full px-4 py-3 border rounded-lg ${isRenew ? "bg-gray-100 cursor-not-allowed" : ""}`}
               >
                 <option value="">Select Type</option>
                 <option value="Life">Life</option>
@@ -188,82 +239,77 @@ const PolicyModal = ({ policy, onClose }) => {
               </select>
             </div>
 
+            {/* Premium */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Premium Amount *
-              </label>
+              <label className="text-sm font-medium">Premium *</label>
               <input
                 type="number"
                 name="premiumAmt"
                 value={formData.premiumAmt}
                 onChange={handleChange}
-                step="0.01"
-                min="0"
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
-                placeholder="0.00"
-                required
+                disabled={isRenew}
+                className={`w-full px-4 py-3 border rounded-lg ${isRenew ? "bg-gray-100 cursor-not-allowed" : ""}`}
               />
             </div>
 
+            {/* Status */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Status
-              </label>
+              <label className="text-sm font-medium">Status *</label>
               <select
                 name="status"
                 value={formData.status}
                 onChange={handleChange}
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                disabled={isRenew}
+                className={`w-full px-4 py-3 border rounded-lg ${isRenew ? "bg-gray-100 cursor-not-allowed" : ""}`}
               >
                 <option value="Active">Active</option>
-                <option value="Lapsed">Lapsed</option>
-                <option value="Cancelled">Cancelled</option>
               </select>
             </div>
 
+            {/* Start Date */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Start Date *
-              </label>
+              <label className="text-sm font-medium">Start Date *</label>
               <input
                 type="date"
                 name="startDate"
                 value={formData.startDate}
                 onChange={handleChange}
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
-                required
+                disabled={isEdit || isRenew}
+                min={startMin}
+                className={`w-full px-4 py-3 border rounded-lg ${
+                  isEdit || isRenew ? "bg-gray-100 cursor-not-allowed" : ""
+                }`}
               />
             </div>
 
+            {/* End Date */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                End Date *
-              </label>
+              <label className="text-sm font-medium">End Date *</label>
               <input
                 type="date"
                 name="endDate"
                 value={formData.endDate}
                 onChange={handleChange}
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
-                required
+                disabled={isEdit}
+                min={endMin}
+                className={`w-full px-4 py-3 border rounded-lg ${
+                  isEdit ? "bg-gray-100 cursor-not-allowed" : ""
+                }`}
               />
             </div>
           </div>
 
+          {/* Buttons */}
           <div className="flex space-x-4 pt-4">
-            <button
-              type="button"
-              onClick={onClose}
-              className="flex-1 px-6 py-3 border border-gray-300 rounded-lg font-semibold text-gray-700 hover:bg-gray-50 transition-colors"
-            >
+            <button onClick={onClose} type="button" className="flex-1 border rounded-lg px-6 py-3 bg-gray-50">
               Cancel
             </button>
             <button
               type="submit"
               disabled={loading}
-              className="flex-1 bg-gradient-to-r from-blue-600 to-green-500 text-white px-6 py-3 rounded-lg font-semibold hover:from-blue-700 hover:to-green-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed transform hover:scale-[1.02] active:scale-[0.98]"
+              className="flex-1 px-6 py-3 rounded-lg bg-gradient-to-r from-blue-600 to-green-500 text-white font-semibold"
             >
-              {loading ? 'Saving...' : policy ? 'Update Policy' : 'Create Policy'}
+              {loading ? "Saving..." : isCreate ? "Create Policy" : isRenew ? "Renew Policy" : "Update Policy"}
             </button>
           </div>
         </form>
